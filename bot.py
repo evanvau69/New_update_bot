@@ -81,7 +81,7 @@ async def handle_show(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- Main Function ---
 def main():
-    TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+    TOKEN = "8058100416:AAHxtVSOadxiyhXYMCVT748pZqQcdqDk-84"
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
