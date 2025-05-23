@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: telegram-twilio-bot
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false  # We will add this in dashboard
