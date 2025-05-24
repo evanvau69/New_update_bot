@@ -8,8 +8,8 @@ from telegram.ext import (
 )
 from telegram.ext.webhook import WebhookServer
 
-TOKEN = os.getenv("7920919744:AAFDXdbj8OB68YsgxqdPaf3FwKPgUNbQmnM")
-APP_URL = os.getenv("https://new-update-bot.onrender.com")  # Ex: https://your-service.onrender.com
+TOKEN = os.getenv("BOT_TOKEN")
+APP_URL = os.getenv("APP_URL")  # Ex: https://your-service.onrender.com
 
 # Memory-based user data
 user_sessions = {}
