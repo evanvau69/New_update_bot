@@ -1,129 +1,119 @@
-from telegram import (
-    Update, InlineKeyboardButton, InlineKeyboardMarkup
-)
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
-)
+import os
+from flask import Flask, request
 from twilio.rest import Client
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    Application, CommandHandler, CallbackQueryHandler,
+    ContextTypes
+)
+from telegram.ext.webhook import WebhookServer
 
-# In-memory session and user number tracking
+TOKEN = os.getenv("7920919744:AAFDXdbj8OB68YsgxqdPaf3FwKPgUNbQmnM")
+APP_URL = os.getenv("https://new-update-bot.onrender.com")  # Ex: https://your-service.onrender.com
+
+# Memory-based user data
 user_sessions = {}
 user_numbers = {}
 
-# Login command
-async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        sid = context.args[0]
-        auth_token = context.args[1]
-        client = Client(sid, auth_token)
-        client.api.accounts(sid).fetch()
+# Flask app init
+flask_app = Flask(__name__)
 
-        user_sessions[update.effective_user.id] = {
-            "sid": sid,
-            "auth_token": auth_token
-        }
+# Telegram App init
+telegram_app = Application.builder().token(TOKEN).build()
 
-        await update.message.reply_text("✅ লগইন সফল হয়েছে!")
-    except Exception as e:
-        await update.message.reply_text("❌ লগইন ব্যর্থ। SID অথবা AUTH TOKEN ভুল।")
-
-# Helper function to get Twilio client
+# Helper to get client
 def get_twilio_client(user_id):
     session = user_sessions.get(user_id)
     if session:
         return Client(session["sid"], session["auth_token"])
     return None
 
-# Buy number command
+# Login command
+async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        sid = context.args[0]
+        token = context.args[1]
+        client = Client(sid, token)
+        client.api.accounts(sid).fetch()
+        user_sessions[update.effective_user.id] = {"sid": sid, "auth_token": token}
+        await update.message.reply_text("✅ লগইন সফল হয়েছে!")
+    except:
+        await update.message.reply_text("❌ লগইন ব্যর্থ। SID বা Token ভুল।")
+
+# Buy number
 async def buy_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     client = get_twilio_client(user_id)
     if not client:
-        await update.message.reply_text("❗️আপনি এখনো লগইন করেননি। /login দিয়ে লগইন করুন।")
+        await update.message.reply_text("❗️আপনি লগইন করেননি।")
         return
-
     numbers = client.available_phone_numbers("CA").local.list(limit=50)
+    keyboard = [[InlineKeyboardButton(num.phone_number, callback_data=f"select_{num.phone_number}")] for num in numbers]
+    await update.message.reply_text("🇨🇦 কানাডিয়ান নাম্বার লিস্ট:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-    keyboard = [
-        [InlineKeyboardButton(num.phone_number, callback_data=f"select_{num.phone_number}")]
-        for num in numbers
-    ]
-    markup = InlineKeyboardMarkup(keyboard)
+# Show messages
+async def show_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    client = get_twilio_client(user_id)
+    if not client or user_id not in user_numbers:
+        await update.message.reply_text("❗️আপনার কোনো একটিভ নাম্বার নেই।")
+        return
+    sid = user_numbers[user_id]
+    number = client.incoming_phone_numbers(sid).phone_number
+    messages = client.messages.list(to=number, limit=10)
+    if not messages:
+        await update.message.reply_text("কোনো ইনকামিং মেসেজ নেই।")
+        return
+    text = f"📨 মেসেজ (for {number}):\n\n"
+    for msg in messages:
+        text += f"From: {msg.from_}\nBody: {msg.body}\n\n"
+    await update.message.reply_text(text)
 
-    await update.message.reply_text("🇨🇦 নিচে কানাডিয়ান নাম্বার লিস্ট:", reply_markup=markup)
-
-# Callback for number selection and buy
+# Callback handler
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
     user_id = query.from_user.id
     client = get_twilio_client(user_id)
     if not client:
-        await query.edit_message_text("❗️আপনি লগইন করেননি।")
+        await query.edit_message_text("❗️লগইন করুন।")
         return
-
     data = query.data
-
     if data.startswith("select_"):
-        phone_number = data.split("_")[1]
-        keyboard = [
-            [InlineKeyboardButton("Buy 🎉", callback_data=f"buy_{phone_number}")]
-        ]
-        markup = InlineKeyboardMarkup(keyboard)
-        await query.message.reply_text(f"নাম্বার: {phone_number}", reply_markup=markup)
-
+        number = data.split("_", 1)[1]
+        keyboard = [[InlineKeyboardButton("Buy 🎉", callback_data=f"buy_{number}")]]
+        await query.message.reply_text(f"নাম্বার: {number}", reply_markup=InlineKeyboardMarkup(keyboard))
     elif data.startswith("buy_"):
-        new_number = data.split("_")[1]
-
-        # Delete old number if exists
+        number = data.split("_", 1)[1]
         if user_id in user_numbers:
             try:
                 old_sid = user_numbers[user_id]
                 client.incoming_phone_numbers(old_sid).delete()
-                await query.message.reply_text("❌ আগের নাম্বার ডিলিট করা হয়েছে।")
+                await query.message.reply_text("❌ পুরাতন নাম্বার ডিলিট হয়েছে।")
             except:
-                await query.message.reply_text("⚠️ পুরনো নাম্বার ডিলিট করতে সমস্যা হয়েছে।")
+                await query.message.reply_text("⚠️ আগের নাম্বার ডিলিট করতে সমস্যা হয়েছে।")
+        incoming = client.incoming_phone_numbers.create(phone_number=number)
+        user_numbers[user_id] = incoming.sid
+        await query.message.reply_text(f"✅ আপনি কিনেছেন: {number}")
 
-        # Buy new number
-        incoming_number = client.incoming_phone_numbers.create(phone_number=new_number)
-        user_numbers[user_id] = incoming_number.sid
+# Register handlers
+telegram_app.add_handler(CommandHandler("login", login))
+telegram_app.add_handler(CommandHandler("buy_number", buy_number))
+telegram_app.add_handler(CommandHandler("show", show_messages))
+telegram_app.add_handler(CallbackQueryHandler(button_handler))
 
-        await query.message.reply_text(f"✅ আপনি নাম্বারটি কিনেছেন: {new_number}")
+# Flask route for webhook
+@flask_app.route(f"/webhook/{TOKEN}", methods=["POST"])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), telegram_app.bot)
+    telegram_app.update_queue.put(update)
+    return "OK"
 
-# Show incoming messages
-async def show_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    client = get_twilio_client(user_id)
+# Set webhook when app starts
+@flask_app.before_first_request
+def set_webhook():
+    telegram_app.bot.set_webhook(f"{APP_URL}/webhook/{TOKEN}")
 
-    if not client:
-        await update.message.reply_text("❗️আপনি লগইন করেননি।")
-        return
-
-    if user_id not in user_numbers:
-        await update.message.reply_text("❗️আপনার কোনো নাম্বার অ্যাক্টিভ নেই।")
-        return
-
-    phone_sid = user_numbers[user_id]
-    number = client.incoming_phone_numbers(phone_sid).phone_number
-
-    messages = client.messages.list(to=number, limit=10)
-    if not messages:
-        await update.message.reply_text("কোনো ইনকামিং মেসেজ পাওয়া যায়নি।")
-        return
-
-    text = f"📨 Incoming messages for {number}:\n\n"
-    for msg in messages:
-        text += f"From: {msg.from_}\nBody: {msg.body}\n\n"
-
-    await update.message.reply_text(text)
-
-# Bot start
-app = ApplicationBuilder().token("7920919744:AAFDXdbj8OB68YsgxqdPaf3FwKPgUNbQmnM").build()
-
-app.add_handler(CommandHandler("login", login))
-app.add_handler(CommandHandler("buy_number", buy_number))
-app.add_handler(CommandHandler("show", show_messages))
-app.add_handler(CallbackQueryHandler(button_handler))
-
-app.run_polling()
+# Start app
+if __name__ == "__main__":
+    flask_app.run(host="0.0.0.0", port=10000)
